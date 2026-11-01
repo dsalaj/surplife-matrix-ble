@@ -3,7 +3,8 @@
 Control Surplife Bluetooth LED matrix panels (ZJ-PSC-HC2-RGB-1512-A) from Python — no app needed.
 Not affiliated with Surplife.
 
-Panel: **90 x 12** pixels (reported by the device), BLE name `IOTBTFC9`.
+Works with panels advertising as `IOTBT*` over BLE. Tested on a **90 x 12** panel
+(board marking ZJ-PSC-HC2-RGB-1512-A); the panel size is read from the device.
 
 ## Setup
 ```sh
@@ -13,13 +14,18 @@ Close the Surplife phone app first (the panel accepts one BLE connection).
 
 ## Usage
 ```sh
-# convert any GIF/APNG/WebP/PNG to a device-safe 90x12 GIF
-.venv/bin/python make_gif.py my_anim.gif animations/my_anim.gif --mode fill   # or fit / stretch
+# find panels (no connection) and check size
+.venv/bin/python matrix.py scan
+.venv/bin/python matrix.py status            # prints e.g. IOTBTFC9: 90x12
+
+# convert any GIF/APNG/WebP/PNG to a device-safe GIF of your panel size
+.venv/bin/python make_gif.py my_anim.gif animations/my_anim.gif --size 90x12 --mode fill   # or fit / stretch
 
 # one BLE session, several actions in order
 .venv/bin/python matrix.py gif:animations/my_anim.gif:60      # upload + play, speed 60
 .venv/bin/python matrix.py bright:40 on off clock:3 sleep:2 -v
 ```
+Without `-n`, the nearest `IOTBT*` panel is used; `-n FC9` / `-n IOTBTFC9` picks one.
 Actions: `status on off bright:N speed:N clock:STYLE gif:PATH[:speed] raw:HEX sleep:S`.
 Use from Python: `async with Matrix() as m: await m.show_gif(data)`.
 
@@ -38,3 +44,6 @@ Upload: `ea 05` cache check -> `e0 30` size -> `e0 32` 490-byte segments -> `e0 
 Based on [lambdafu/surplife](https://github.com/lambdafu/surplife) (96x16 sibling device,
 see its PROTOCOL.md for playlist/text/image commands) and
 [ge0rg/surplife-curtain](https://codeberg.org/ge0rg/surplife-curtain).
+
+## License
+MIT, see [LICENSE](LICENSE).

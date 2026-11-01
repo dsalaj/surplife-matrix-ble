@@ -1,4 +1,4 @@
-"""Helpers to build device-safe 90x12 GIFs (single global palette, >=100 ms/frame)."""
+"""Helpers to build device-safe GIFs (default 90x12) (single global palette, >=100 ms/frame)."""
 import colorsys, io, math, sys
 from PIL import Image
 
@@ -156,13 +156,15 @@ def convert(src, dst, mode="fill", delay_ms=None, max_frames=60):
 
 if __name__ == "__main__":
     import argparse
-    p = argparse.ArgumentParser(description="Convert image/animation to a device-safe 90x12 GIF")
+    p = argparse.ArgumentParser(description="Convert image/animation to a device-safe panel-sized GIF")
     p.add_argument("src", nargs="?", help="input file (GIF/APNG/WebP/PNG/JPG); omit for test pattern")
     p.add_argument("dst", nargs="?", default="animations/test_rainbow.gif")
     p.add_argument("--mode", choices=["fill", "fit", "stretch"], default="fill",
                    help="fill=crop to 90x12, fit=letterbox, stretch=distort")
     p.add_argument("--delay", type=int, help="ms per frame (min 100)")
+    p.add_argument("--size", default=f"{W}x{H}", help="panel size COLSxROWS (shown by matrix.py), default 90x12")
     a = p.parse_args()
+    W, H = map(int, a.size.lower().split("x"))
     if a.src:
         convert(a.src, a.dst, a.mode, a.delay)
     else:

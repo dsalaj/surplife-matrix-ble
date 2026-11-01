@@ -1,4 +1,4 @@
-"""Driver for the Surplife BLE LED matrix (board ZJ-PSC-HC2-RGB-1512-A, 90x12).
+"""Driver for Surplife BLE LED matrix panels (IOTBT*, e.g. board ZJ-PSC-HC2-RGB-1512-A, 90x12).
 
 Protocol knowledge from:
   - https://github.com/lambdafu/surplife  (PROTOCOL.md, 96x16 sibling device)
@@ -22,15 +22,29 @@ from bleak import BleakClient, BleakScanner
 
 WRITE_UUID = "0000ff01-0000-1000-8000-00805f9b34fb"
 NOTIFY_UUID = "0000ff02-0000-1000-8000-00805f9b34fb"
-DEFAULT_NAME = "IOTBTFC9"
-COLS, ROWS = 90, 12
+NAME_PREFIX = "IOTBT"
 MAX_SEGMENT = 490
 
 
+async def find_panel(name: str | None = None, timeout: float = 15.0):
+    """Find a panel by full name / suffix, or the strongest-signal IOTBT* device."""
+    if name and not name.upper().startswith(NAME_PREFIX):
+        name = NAME_PREFIX + name.upper()
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    panels = [(adv.rssi, dev) for dev, adv in found.values()
+              if (adv.local_name or dev.name or "").startswith(NAME_PREFIX)
+              and (name is None or (adv.local_name or dev.name) == name)]
+    if not panels:
+        raise RuntimeError(f"no panel {name or NAME_PREFIX + '*'} found "
+                           "(powered? Surplife phone app still connected?)")
+    return max(panels, key=lambda p: p[0])[1]
+
+
 class Matrix:
-    def __init__(self, name: str = DEFAULT_NAME, len_mode: str = "be16",
+    def __init__(self, name: str | None = None, len_mode: str = "be16",
                  verbose: bool = False, timeout: float = 5.0):
-        self.name = name
+        self.name = name  # full BLE name, short suffix ("FC9"), or None = nearest IOTBT*
+        self.cols = self.rows = None  # filled from the device status after init
         self.len_mode = len_mode  # "be16" (transport v1) or "u8" (v0)
         self.verbose = verbose
         self.timeout = timeout
@@ -41,9 +55,8 @@ class Matrix:
 
     # ── connection ────────────────────────────────────────────────
     async def __aenter__(self):
-        dev = await BleakScanner.find_device_by_name(self.name, timeout=20)
-        if dev is None:
-            raise RuntimeError(f"{self.name} not found (powered? phone app connected?)")
+        dev = await find_panel(self.name)
+        self.name = dev.name or self.name
         self.client = BleakClient(dev, timeout=15)
         await self.client.connect()
         await self.client.start_notify(NOTIFY_UUID, self._on_notify)
@@ -111,6 +124,7 @@ class Matrix:
 
     def _parse_status(self, inner: bytes) -> dict:
         if len(inner) >= 19:
+            self.cols, self.rows = inner[17], inner[18]
             self.status = {"power": inner[7] != 0x24, "speed": inner[10],
                            "brightness": inner[14], "cols": inner[17], "rows": inner[18]}
         return self.status
@@ -188,18 +202,28 @@ class Matrix:
         return h, r
 
 
+async def _scan():
+    found = await BleakScanner.discover(timeout=10, return_adv=True)
+    for dev, adv in sorted(found.values(), key=lambda x: -x[1].rssi):
+        n = adv.local_name or dev.name or ""
+        if n.startswith(NAME_PREFIX):
+            print(f"{n}  rssi={adv.rssi}  {dev.address}")
+
+
 # ── CLI: one session, many actions ────────────────────────────────
 async def _main(argv):
     p = argparse.ArgumentParser(description="Surplife 90x12 LED matrix control (one BLE session)")
-    p.add_argument("-n", "--name", default=DEFAULT_NAME)
+    p.add_argument("-n", "--name", help="panel BLE name or suffix, e.g. IOTBTFC9 or FC9 (default: nearest)")
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--len-mode", default="be16", choices=["be16", "u8"])
     p.add_argument("actions", nargs="+",
-                   help="status | on | off | bright:N | speed:N | clock:STYLE | "
+                   help="scan (alone) | status | on | off | bright:N | speed:N | clock:STYLE | "
                         "gif:PATH[:speed] | raw:HEX | sleep:S")
     a = p.parse_args(argv)
+    if a.actions == ["scan"]:  # no connection, safe w.r.t. the connect limit
+        return await _scan()
     async with Matrix(a.name, a.len_mode, a.verbose) as m:
-        print("status:", m.status)
+        print(f"{m.name}: {m.cols}x{m.rows}", m.status)
         for act in a.actions:
             cmd, _, arg = act.partition(":")
             if cmd == "status":
@@ -214,7 +238,12 @@ async def _main(argv):
                 await m.clock(int(arg or 0))
             elif cmd == "gif":
                 path, _, spd = arg.partition(":")
-                h, r = await m.show_gif(open(path, "rb").read(), int(spd or 50))
+                data = open(path, "rb").read()
+                gw, gh = int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+                if (gw, gh) != (m.cols, m.rows):
+                    print(f"WARNING: {path} is {gw}x{gh}, panel is {m.cols}x{m.rows}; "
+                          f"convert with: make_gif.py SRC DST --size {m.cols}x{m.rows}")
+                h, r = await m.show_gif(data, int(spd or 50))
                 print(f"gif {path}: {r} hash={h.hex()}")
             elif cmd == "raw":
                 await m.send(bytes.fromhex(arg))
