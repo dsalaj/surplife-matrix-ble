@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# local reference copies of other projects
+vendor/
