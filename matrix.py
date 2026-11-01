@@ -164,6 +164,47 @@ class Matrix:
     async def clock(self, style: int = 0, h24: bool = True, date: bool = False):
         await self.send(bytes([0xEA, 0x10, style & 7, 2 if h24 else 1, 1 if date else 0]))
 
+    # ── playlist (device carousel of stored content) ─────────────
+    @staticmethod
+    def _entries(resp: bytes, size: int) -> list[bytes]:
+        n = resp[3]
+        body = resp[4:]
+        if len(body) < n * size:
+            raise ValueError(f"short playlist reply: {n} entries, {len(body)} bytes: {resp.hex()}")
+        return [body[i * size:(i + 1) * size] for i in range(n)]
+
+    async def get_playlist(self) -> list[dict]:
+        """Entries: {hash, flag, index (1-based, 0 = not in rotation), duration (s)}."""
+        flags = self._entries(await self.send_wait(b"\xea\x0c", 0x15, 0xEA, 0x0C), 17)
+        details = self._entries(await self.send_wait(b"\xea\x0e", 0x15, 0xEA, 0x0E), 19)
+        by_hash = {d[3:].hex(): d for d in details}
+        out = []
+        for e in flags:
+            h = e[1:].hex()
+            d = by_hash.get(h, bytes(19))
+            out.append({"hash": h, "flag": e[0], "index": d[0], "duration": d[2]})
+        return out
+
+    async def set_playlist(self, entries: list[dict]):
+        """Replace the playlist; entries need 'hash' and 'duration' (seconds).
+
+        NOTE: on the 90x12 firmware (product 02 05) this is ACKed but reads back
+        empty, and uploaded content is kept in RAM only (lost on power-off), so it
+        cannot be used to set a boot animation. Kept for 96x16 sibling devices.
+        """
+        cmd = bytearray([0xEA, 0x0B, len(entries), 0x01])  # 01 = replace/reorder
+        for e in entries:
+            cmd += b"\x00" + bytes.fromhex(e["hash"])
+        await self.send_wait(bytes(cmd), 0x15, 0xEA, 0x0B)
+        cmd = bytearray([0xEA, 0x0D, len(entries)])
+        for i, e in enumerate(entries, 1):
+            cmd += bytes([i, 0x00, e.get("duration", 10)]) + bytes.fromhex(e["hash"])
+        await self.send_wait(bytes(cmd), 0x15, 0xEA, 0x0D)
+
+    async def is_cached(self, c_hash: bytes) -> bool:
+        resp = await self.send_wait(b"\xea\x05\x01" + c_hash, 0x15, 0xEA, 0x05)
+        return len(resp) > 3 and resp[3] == 0x01
+
     # ── content upload ────────────────────────────────────────────
     async def upload(self, cache_type: int, meta: bytes, payload: bytes,
                      activate: bytes, c_hash: bytes, force: bool = False):
